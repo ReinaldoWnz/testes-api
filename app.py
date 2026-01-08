@@ -73,3 +73,28 @@ with tab2:
         else:
             st.success("Link gerado!")
             st.code(data['data']['generateShortLink']['shortLinkList'][0]['shortLink'])
+
+with st.tab("Relatório de Vendas"):
+    if st.button("Ver Vendas Recentes"):
+        # Define o intervalo de tempo (Unix Timestamp)
+        agora = int(time.time())
+        tres_dias_atras = agora - (3 * 24 * 60 * 60)
+        
+        query = f"""{{
+            conversionReport(purchaseTimeStart: {tres_dias_atras}, purchaseTimeEnd: {agora}, limit: 20) {{
+                nodes {{
+                    purchaseTime
+                    orderStatus
+                    totalCommission
+                    items {{
+                        itemName
+                        itemPrice
+                    }}
+                }}
+            }}
+        }}"""
+        
+        payload_str = json.dumps({"query": query}, separators=(',', ':'))
+        headers = gerar_headers(payload_str)
+        response = requests.post(ENDPOINT, headers=headers, data=payload_str)
+        st.json(response.json())
