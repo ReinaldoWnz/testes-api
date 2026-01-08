@@ -69,22 +69,20 @@ with tab2:
                 st.code(short_link)
 
 with tab3:
-    st.subheader("Vendas dos Últimos 3 Dias")
-    if st.button("Consultar Vendas"):
+    st.subheader("📊 Resumo de Métricas (Últimos 3 Dias)")
+    
+    if st.button("Atualizar Painel"):
         agora = int(time.time())
-        # O intervalo máximo permitido é de 3 meses
         tres_dias_atras = agora - (3 * 24 * 60 * 60)
         
-        # Ajustado para nomes de campos padrão da V2
+        # Query ajustada para pegar dados de conversão
         query = f"""{{
-            conversionReport(purchaseTimeStart: {tres_dias_atras}, purchaseTimeEnd: {agora}, limit: 20) {{
+            conversionReport(purchaseTimeStart: {tres_dias_atras}, purchaseTimeEnd: {agora}, limit: 100) {{
                 nodes {{
-                    purchaseTime
-                    conversionStatus
                     totalCommission
+                    conversionStatus
                     orders {{
                         items {{
-                            itemName
                             itemPrice
                         }}
                     }}
@@ -99,18 +97,36 @@ with tab3:
             data = response.json()
             
             if "errors" in data:
-                # Exibe o erro exato para podermos depurar se necessário
-                st.error(f"Erro de Campo: {data['errors'][0]['message']}")
+                st.error(f"Erro: {data['errors'][0]['message']}")
             else:
                 vendas = data.get('data', {}).get('conversionReport', {}).get('nodes', [])
-                if not vendas:
-                    st.info("Nenhuma venda encontrada no período.")
-                for venda in vendas:
-                    # Formata o timestamp para leitura humana
-                    data_venda = time.strftime('%d/%m/%Y %H:%M', time.gmtime(venda['purchaseTime']))
-                    st.write(f"📅 **Data:** {data_venda}")
-                    st.write(f"💰 **Comissão:** R$ {venda.get('totalCommission', '0.00')}")
-                    st.write(f"📊 **Status:** {venda.get('conversionStatus', 'N/A')}")
-                    st.divider()
+                
+                # Cálculo das métricas estilo Shopee
+                total_pedidos = len(vendas)
+                comissao_total = sum(float(v['totalCommission']) for v in vendas)
+                valor_total_pedidos = 0
+                itens_vendidos = 0
+                
+                for v in vendas:
+                    for order in v.get('orders', []):
+                        for item in order.get('items', []):
+                            valor_total_pedidos += float(item.get('itemPrice', 0))
+                            itens_vendidos += 1
+
+                # Exibição em Colunas (Cards)
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Pedidos", total_pedidos)
+                with col2:
+                    st.metric("Comissão Est. (R$)", f"{comissao_total:.2f}")
+                with col3:
+                    st.metric("Itens Vendidos", itens_vendidos)
+                with col4:
+                    st.metric("Valor do Pedido (R$)", f"{valor_total_pedidos:.2f}")
+
+                st.divider()
+                st.info("Nota: A API de Afiliados não fornece o número de 'Cliques' em tempo real através do conversionReport. Esses dados são consolidados apenas no portal.")
+
         except Exception as e:
-            st.error(f"Erro na conexão: {e}")
+            st.error(f"Erro ao processar métricas: {e}")
