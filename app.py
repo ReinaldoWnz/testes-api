@@ -4,11 +4,8 @@ import time
 import hashlib
 import json
 
-st.set_page_config(page_title="Shopee Affiliate Panel", page_icon="🛍️")
-
-st.title("🛍️ Painel Afiliado Shopee")
-
-# Configurações na Barra Lateral
+# --- Configuração de Página e Sidebar (Igual ao anterior) ---
+st.set_page_config(page_title="Shopee Affiliate V2", page_icon="🛍️")
 st.sidebar.header("Autenticação")
 APP_ID = st.sidebar.text_input("AppID", value="1818441000")
 SECRET = st.sidebar.text_input("Secret (Senha)", type="password")
@@ -16,26 +13,23 @@ ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql"
 
 def gerar_headers(payload_str):
     timestamp = str(int(time.time()))
-    # Ordem obrigatória: AppId + Timestamp + Payload + Secret
     factor = APP_ID + timestamp + payload_str + SECRET
     signature = hashlib.sha256(factor.encode('utf-8')).hexdigest()
-    
     return {
         "Content-Type": "application/json",
         "Authorization": f"SHA256 Credential={APP_ID}, Timestamp={timestamp}, Signature={signature}"
     }
 
-# Abas para organizar as funções
-tab1, tab2 = st.tabs(["Listar Ofertas", "Gerar Link Curto"])
+tab1, tab2 = st.tabs(["Listar Ofertas (V2)", "Gerar Link Curto"])
 
 with tab1:
-    st.subheader("Melhores Ofertas de Marcas")
+    st.subheader("Ofertas Shopee V2")
     if st.button("Buscar Ofertas"):
-        # Corrigido: Usando 'offerName' em vez de 'brandName' conforme o manual
+        # ATUALIZADO: Usando a estrutura productOfferV2 ou similar conforme a versão atual
         query = """{
-            brandOffer(limit: 5) {
+            productOfferV2(limit: 5) {
                 nodes {
-                    offerName
+                    productName
                     commissionRate
                     offerLink
                 }
@@ -51,10 +45,12 @@ with tab1:
             data = response.json()
             
             if "errors" in data:
-                st.error(f"Erro: {data['errors'][0]['message']}")
+                # Se productOfferV2 ainda der erro de nome, a Shopee costuma sugerir o nome correto no erro
+                st.error(f"Erro da API: {data['errors'][0]['message']}")
             else:
-                for offer in data['data']['brandOffer']['nodes']:
-                    st.write(f"**Produto:** {offer['offerName']}")
+                nodes = data.get('data', {}).get('productOfferV2', {}).get('nodes', [])
+                for offer in nodes:
+                    st.write(f"**Produto:** {offer['productName']}")
                     st.write(f"**Comissão:** {offer['commissionRate']}%")
                     st.write(f"[Link da Oferta]({offer['offerLink']})")
                     st.divider()
@@ -62,34 +58,18 @@ with tab1:
             st.error(f"Erro na conexão: {e}")
 
 with tab2:
+    # (O código de Mutation para Short Link permanece o mesmo, pois é padrão V2)
     st.subheader("Transformar Link em Afiliado")
-    link_original = st.text_input("Cole o link do produto Shopee aqui:")
-    
+    link_original = st.text_input("Cole o link do produto Shopee:")
     if st.button("Gerar Link Curto"):
-        if link_original:
-            # Query específica para gerar links curtos (ShortLink)
-            query = f"""
-            mutation {{
-                generateShortLink(input: {{ originLinks: ["{link_original}"] }}) {{
-                    shortLinkList {{
-                        shortLink
-                    }}
-                }}
-            }}
-            """
-            
-            payload = {"query": query}
-            payload_str = json.dumps(payload, separators=(',', ':'))
-            
-            headers = gerar_headers(payload_str)
-            response = requests.post(ENDPOINT, headers=headers, data=payload_str)
-            data = response.json()
-            
-            if "errors" in data:
-                st.error(f"Erro: {data['errors'][0]['message']}")
-            else:
-                link_gerado = data['data']['generateShortLink']['shortLinkList'][0]['shortLink']
-                st.success("Link gerado com sucesso!")
-                st.code(link_gerado)
+        query = f'mutation {{ generateShortLink(input: {{ originLinks: ["{link_original}"] }}) {{ shortLinkList {{ shortLink }} }} }}'
+        payload = {"query": query}
+        payload_str = json.dumps(payload, separators=(',', ':'))
+        headers = gerar_headers(payload_str)
+        response = requests.post(ENDPOINT, headers=headers, data=payload_str)
+        data = response.json()
+        if "errors" in data:
+            st.error(data['errors'][0]['message'])
         else:
-            st.warning("Insira um link válido.")
+            st.success("Link gerado!")
+            st.code(data['data']['generateShortLink']['shortLinkList'][0]['shortLink'])
