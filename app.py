@@ -68,16 +68,36 @@ with tab2:
                 st.success("Link gerado!")
                 st.code(short_link)
 
+import datetime
+
 with tab3:
-    st.subheader("📊 Resumo de Métricas (Últimos 3 Dias)")
+    st.subheader("📊 métricas Principais")
+
+    # 1. Filtro de Data (Interface estilo Shopee)
+    hoje = datetime.date.today()
+    tres_dias_atras = hoje - datetime.timedelta(days=3)
     
-    if st.button("Atualizar Painel"):
-        agora = int(time.time())
-        tres_dias_atras = agora - (3 * 24 * 60 * 60)
+    col_data, _ = st.columns([1, 2])
+    with col_data:
+        periodo = st.date_input(
+            "Período dos dados",
+            value=(tres_dias_atras, hoje),
+            max_value=hoje,
+            help="O intervalo máximo permitido é de 3 meses."
+        )
+
+    # Verificação para garantir que o usuário selecionou início e fim
+    if isinstance(periodo, tuple) and len(periodo) == 2:
+        data_inicio, data_fim = periodo
         
-        # Query ajustada para pegar dados de conversão
+        # Converter datas para Unix Timestamp (Segundos)
+        ts_inicio = int(time.mktime(data_inicio.timetuple()))
+        # Adicionamos 86399 segundos para cobrir até o final do dia escolhido
+        ts_fim = int(time.mktime(data_fim.timetuple())) + 86399
+
+        # 2. Carregamento Automático: A query roda sempre que as variáveis acima mudam
         query = f"""{{
-            conversionReport(purchaseTimeStart: {tres_dias_atras}, purchaseTimeEnd: {agora}, limit: 100) {{
+            conversionReport(purchaseTimeStart: {ts_inicio}, purchaseTimeEnd: {ts_fim}, limit: 100) {{
                 nodes {{
                     totalCommission
                     conversionStatus
@@ -91,19 +111,20 @@ with tab3:
         }}"""
         
         payload_str = json.dumps({"query": query}, separators=(',', ':'))
+        
         try:
             headers = gerar_headers(payload_str)
             response = requests.post(ENDPOINT, headers=headers, data=payload_str)
             data = response.json()
             
             if "errors" in data:
-                st.error(f"Erro: {data['errors'][0]['message']}")
+                st.error(f"Erro na API: {data['errors'][0]['message']}")
             else:
                 vendas = data.get('data', {}).get('conversionReport', {}).get('nodes', [])
                 
-                # Cálculo das métricas estilo Shopee
+                # Cálculos das métricas
                 total_pedidos = len(vendas)
-                comissao_total = sum(float(v['totalCommission']) for v in vendas)
+                comissao_total = sum(float(v.get('totalCommission', 0)) for v in vendas)
                 valor_total_pedidos = 0
                 itens_vendidos = 0
                 
@@ -113,20 +134,18 @@ with tab3:
                             valor_total_pedidos += float(item.get('itemPrice', 0))
                             itens_vendidos += 1
 
-                # Exibição em Colunas (Cards)
-                col1, col2, col3, col4 = st.columns(4)
+                # 3. Layout de Cards (Igual ao seu print da Shopee)
+                c1, c2, c3 = st.columns(3)
+                c4, c5, c6 = st.columns(3)
                 
-                with col1:
-                    st.metric("Pedidos", total_pedidos)
-                with col2:
-                    st.metric("Comissão Est. (R$)", f"{comissao_total:.2f}")
-                with col3:
-                    st.metric("Itens Vendidos", itens_vendidos)
-                with col4:
-                    st.metric("Valor do Pedido (R$)", f"{valor_total_pedidos:.2f}")
-
-                st.divider()
-                st.info("Nota: A API de Afiliados não fornece o número de 'Cliques' em tempo real através do conversionReport. Esses dados são consolidados apenas no portal.")
+                c1.metric("Pedido", total_pedidos)
+                c2.metric("Comissão est.(R$)", f"{comissao_total:.2f}")
+                c3.metric("Itens vendidos", itens_vendidos)
+                c4.metric("Valor do pedido(R$)", f"{valor_total_pedidos:.1f}")
+                c5.metric("Cliques", "---", help="Dados de cliques não disponíveis via API de conversão.")
+                c6.metric("Novos compradores", "0")
 
         except Exception as e:
-            st.error(f"Erro ao processar métricas: {e}")
+            st.error(f"Erro ao carregar dados: {e}")
+    else:
+        st.info("Selecione a data de início e fim no calendário acima.")
