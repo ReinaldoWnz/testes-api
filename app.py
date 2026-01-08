@@ -75,15 +75,18 @@ with tab3:
         # O intervalo máximo permitido é de 3 meses
         tres_dias_atras = agora - (3 * 24 * 60 * 60)
         
+        # Ajustado para nomes de campos padrão da V2
         query = f"""{{
             conversionReport(purchaseTimeStart: {tres_dias_atras}, purchaseTimeEnd: {agora}, limit: 20) {{
                 nodes {{
                     purchaseTime
-                    orderStatus
+                    conversionStatus
                     totalCommission
-                    items {{
-                        itemName
-                        itemPrice
+                    orders {{
+                        items {{
+                            itemName
+                            itemPrice
+                        }}
                     }}
                 }}
             }}
@@ -96,15 +99,18 @@ with tab3:
             data = response.json()
             
             if "errors" in data:
-                st.error(data['errors'][0]['message'])
+                # Exibe o erro exato para podermos depurar se necessário
+                st.error(f"Erro de Campo: {data['errors'][0]['message']}")
             else:
                 vendas = data.get('data', {}).get('conversionReport', {}).get('nodes', [])
                 if not vendas:
                     st.info("Nenhuma venda encontrada no período.")
                 for venda in vendas:
-                    st.write(f"📅 **Data:** {time.strftime('%d/%m/%Y %H:%M', time.gmtime(venda['purchaseTime']))}")
-                    st.write(f"💰 **Comissão Total:** R$ {venda['totalCommission']}")
-                    st.write(f"📊 **Status:** {venda['orderStatus']}")
+                    # Formata o timestamp para leitura humana
+                    data_venda = time.strftime('%d/%m/%Y %H:%M', time.gmtime(venda['purchaseTime']))
+                    st.write(f"📅 **Data:** {data_venda}")
+                    st.write(f"💰 **Comissão:** R$ {venda.get('totalCommission', '0.00')}")
+                    st.write(f"📊 **Status:** {venda.get('conversionStatus', 'N/A')}")
                     st.divider()
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro na conexão: {e}")
