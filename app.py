@@ -9,13 +9,24 @@ import datetime
 import pytz
 
 # --- Configurações Iniciais ---
-st.set_page_config(page_title="Dashboard Automatizado Shopee", layout="wide")
+st.set_page_config(page_title="Shopee Dashboard Automatizado", layout="wide")
 
-# --- Autenticação via Sidebar ---
+# Estilo para esconder o drag and drop (já que agora é automático)
+st.markdown("<style>.st-emotion-cache-1c7y2o4 {visibility: hidden;}</style>", unsafe_allow_html=True)
+
+# --- Sidebar: Autenticação e Filtros ---
 st.sidebar.header("🔑 Configurações API")
 APP_ID = st.sidebar.text_input("AppID", value="1818441000")
 SECRET = st.sidebar.text_input("Secret (Senha)", type="password")
 ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql"
+
+st.sidebar.markdown("---")
+st.sidebar.header("📅 Filtros de Período")
+fuso_br = pytz.timezone('America/Sao_Paulo')
+hoje_br = datetime.datetime.now(fuso_br).date()
+padrao_inicio = hoje_br - datetime.timedelta(days=7)
+
+periodo = st.sidebar.date_input("Selecione o Período", value=(padrao_inicio, hoje_br), max_value=hoje_br)
 
 def gerar_headers(payload_str):
     timestamp = str(int(time.time()))
@@ -26,27 +37,20 @@ def gerar_headers(payload_str):
         "Authorization": f"SHA256 Credential={APP_ID}, Timestamp={timestamp}, Signature={signature}"
     }
 
-# --- Filtros de Data Automáticos ---
-st.sidebar.header("📅 Filtros de Período")
-fuso_br = pytz.timezone('America/Sao_Paulo')
-hoje_br = datetime.datetime.now(fuso_br).date()
-padrao_inicio = hoje_br - datetime.timedelta(days=7)
-
-periodo = st.sidebar.date_input("Selecione o Período", value=(padrao_inicio, hoje_br), max_value=hoje_br)
-
-# --- Função de Busca de Dados ---
-@st.cache_data(ttl=600) # Cache de 10 minutos para não estourar limite da API
+@st.cache_data(ttl=600)
 def buscar_dados_shopee(inicio, fim):
+    if not SECRET: return None, "Aguardando Secret"
+    
     ts_inicio = int(fuso_br.localize(datetime.datetime.combine(inicio, datetime.time.min)).timestamp())
     ts_fim = int(fuso_br.localize(datetime.datetime.combine(fim, datetime.time.max)).timestamp())
 
+    # Query Corrigida: Removido completeTime que causava o erro
     query = f"""{{
         conversionReport(purchaseTimeStart: {ts_inicio}, purchaseTimeEnd: {ts_fim}, limit: 100) {{
             nodes {{
                 purchaseTime
                 conversionStatus
                 totalCommission
-                completeTime
                 orders {{
                     items {{
                         itemName
@@ -67,73 +71,79 @@ def buscar_dados_shopee(inicio, fim):
         if "errors" in data:
             return None, data['errors'][0]['message']
         
-        nodes = data.get('data', {}).get('conversionReport', {}).get('nodes', [])
-        return nodes, None
+        return data.get('data', {}).get('conversionReport', {}).get('nodes', []), None
     except Exception as e:
         return None, str(e)
 
-# --- Processamento dos Dados ---
+# --- Processamento Principal ---
+st.title("📊 Painel de Análise Shopee (API Auto)")
+
 if SECRET:
     if isinstance(periodo, tuple) and len(periodo) == 2:
-        nodes, erro = buscar_dados_shopee(periodo[0], periodo[1])
+        with st.spinner('Buscando dados na Shopee...'):
+            nodes, erro = buscar_dados_shopee(periodo[0], periodo[1])
         
         if erro:
             st.error(f"Erro na API: {erro}")
+            if "10035" in erro:
+                st.warning("Dica: O erro 10035 indica que a Shopee ainda não liberou o acesso da sua conta à API. Entre em contato com o suporte deles.")
         elif nodes:
-            # Transformar JSON da API em DataFrame Pandas compatível com o código antigo
+            # Transformação para DataFrame
             rows = []
             for n in nodes:
-                # Extraindo itens para suportar o Top 10
+                # Mapeamento para o formato do seu código antigo
+                dt_pedido = pd.to_datetime(n['purchaseTime'], unit='s', utc=True).tz_convert(fuso_br)
+                status = n['conversionStatus']
+                comissao = float(n.get('totalCommission', 0))
+                
+                # Extraindo itens para o Top 10
                 for order in n.get('orders', []):
                     for item in order.get('items', []):
                         rows.append({
-                            "Horário do pedido": pd.to_datetime(n['purchaseTime'], unit='s', utc=True).tz_convert(fuso_br),
-                            "Tempo de Conclusão": pd.to_datetime(n['completeTime'], unit='s', utc=True).tz_convert(fuso_br) if n['completeTime'] else pd.NaT,
-                            "Status do Pedido": n['conversionStatus'],
-                            "Comissão líquida do afiliado(R$)": float(n['totalCommission']),
-                            "Nome do Item": item['itemName'],
-                            "Qtd": item['qty'],
-                            "Valor Item": float(item['itemPrice'])
+                            "Horário do pedido": dt_pedido,
+                            "Status do Pedido": status,
+                            "Comissão líquida do afiliado(R$)": comissao,
+                            "Nome do Item": item.get('itemName', 'N/A'),
+                            "Qtd": item.get('qty', 0),
+                            "Valor Item": float(item.get('itemPrice', 0))
                         })
             
             df = pd.DataFrame(rows)
 
-            # --- SEÇÃO DE MÉTRICAS (IGUAL AO SEU CÓDIGO) ---
-            st.title("📊 Painel de Análise Automatizado")
-            
-            # Cálculo de Totais
-            df_concluido = df[df["Status do Pedido"].str.contains("COMPLETE|SETTLED", case=False, na=False)]
-            df_pendente = df[df["Status do Pedido"].str.contains("PENDING", case=False, na=False)]
-            
-            total_concluido = df_concluido["Comissão líquida do afiliado(R$)"].sum()
-            total_pendente = df_pendente["Comissão líquida do afiliado(R$)"].sum()
+            # --- Layout de Cartões ---
+            st.subheader("📌 Resumo Financeiro")
+            # Agrupando por status para os cards
+            total_concluido = df[df["Status do Pedido"].isin(["COMPLETE", "SETTLED"])]["Comissão líquida do afiliado(R$)"].sum()
+            total_pendente = df[df["Status do Pedido"] == "PENDING"]["Comissão líquida do afiliado(R$)"].sum()
             total_estimado = total_concluido + total_pendente
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("📌 Concluído (Período)", f"R$ {total_concluido:,.2f}")
-            col2.metric("📌 Total Estimado (Bruto)", f"R$ {total_estimado:,.2f}")
-            col3.metric("📌 Líquido Est. (-11%)", f"R$ {(total_estimado * 0.89):,.2f}")
 
-            # --- GRÁFICOS ---
+            c1, c2, c3 = st.columns(3)
+            c1.metric("💰 Concluído", f"R$ {total_concluido:,.2f}")
+            c2.metric("⏳ Pendente", f"R$ {total_pendente:,.2f}")
+            c3.metric("📈 Total Estimado Líquido (-11%)", f"R$ {(total_estimado * 0.89):,.2f}")
+
+            # --- Gráficos ---
             st.divider()
-            col_esq, col_dir = st.columns(2)
-            
-            with col_esq:
-                agrupado = df.groupby("Status do Pedido")["Comissão líquida do afiliado(R$)"].sum().reset_index()
-                fig_bar = px.bar(agrupado, x="Status do Pedido", y="Comissão líquida do afiliado(R$)", title="Comissão por Status")
-                st.plotly_chart(fig_bar, use_container_width=True)
-            
-            with col_dir:
-                # Top 10 Produtos (Sua lógica de Pop-over)
+            col_graf1, col_graf2 = st.columns(2)
+
+            with col_graf1:
+                df_status = df.groupby("Status do Pedido")["Comissão líquida do afiliado(R$)"].sum().reset_index()
+                fig_pie = px.pie(df_status, names="Status do Pedido", values="Comissão líquida do afiliado(R$)", title="Distribuição por Status")
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            with col_graf2:
+                # Top 10 Produtos (Pop-over original)
                 with st.popover("🛍️ Ver Top 10 Produtos Mais Vendidos"):
                     top_itens = df.groupby("Nome do Item")["Qtd"].sum().nlargest(10).reset_index()
-                    st.table(top_itens.rename(columns={"Nome do Item": "Produto", "Qtd": "Qtd Vendida"}))
+                    st.table(top_itens.rename(columns={"Nome do Item": "Produto", "Qtd": "Vendidos"}))
 
-            # Tabela de Dados Brutos
-            with st.expander("Ver lista detalhada de pedidos"):
+            # Tabela detalhada
+            with st.expander("📄 Visualizar Tabela de Dados Brutos"):
                 st.dataframe(df)
-
         else:
-            st.info("Nenhum dado encontrado para este período.")
+            st.info("Nenhum pedido encontrado para o período selecionado.")
 else:
-    st.warning("Aguardando Configuração da API (AppID e Secret) na barra lateral.")
+    st.info("👋 Por favor, insira o seu **Secret (Senha)** na barra lateral para carregar os dados automaticamente.")
+
+st.sidebar.markdown("---")
+st.sidebar.caption("Versão API V2 Integrada")
